@@ -8,6 +8,10 @@ def accrued_days(months_worked: int) -> float:
     return months_worked * ACCRUAL_PER_MONTH
 
 
+def balance(opening: float, months_worked: int, approved_days: float) -> float:
+    """Days available now: opening balance plus accrual, minus approved leave."""
+    return opening + accrued_days(months_worked) - approved_days
+
 
 def working_days(start: date, end: date) -> int:
     """Count Monday to Friday days from start to end, inclusive."""
