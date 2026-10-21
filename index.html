@@ -2,21 +2,80 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Leave Management</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem auto; padding: 0 1rem; max-width: 880px; color: #1d1d1f; }
+    h1 { font-size: 1.5rem; }
+    section { border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: .4rem; border-bottom: 1px solid #eee; font-size: .95rem; }
+    form label { margin-right: 1rem; }
+    .error { color: #b00020; min-height: 1.2em; }
+  </style>
 </head>
 <body>
   <h1>Leave Management</h1>
-  <table id="employees">
-    <thead><tr><th>Name</th><th>Available days</th></tr></thead>
-    <tbody></tbody>
-  </table>
+
+  <section>
+    <h2>Employees</h2>
+    <table id="employees">
+      <thead><tr><th>Name</th><th>Available days</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Request leave</h2>
+    <form id="request-form">
+      <label>Employee <select id="employee" required></select></label>
+      <label>Start <input type="date" id="start" required></label>
+      <label>End <input type="date" id="end" required></label>
+      <button type="submit">Submit</button>
+    </form>
+    <p id="message" class="error"></p>
+  </section>
+
   <script>
-    fetch("/api/employees")
-      .then((r) => r.json())
-      .then((rows) => {
-        document.querySelector("#employees tbody").innerHTML =
-          rows.map((e) => `<tr><td>${e.name}</td><td>${e.available_days}</td></tr>`).join("");
-      });
+    const $ = (id) => document.getElementById(id);
+    const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    async function loadEmployees() {
+      const employees = await api("/api/employees");
+      $("employee").innerHTML = employees
+        .map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join("");
+      $("employees").tBodies[0].innerHTML = employees
+        .map((e) => `<tr><td>${escapeHtml(e.name)}</td><td>${e.available_days}</td></tr>`).join("");
+    }
+
+    $("request-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      $("message").textContent = "";
+      try {
+        await api("/api/requests", {
+          method: "POST",
+          body: JSON.stringify({
+            employee_id: Number($("employee").value),
+            start_date: $("start").value,
+            end_date: $("end").value,
+          }),
+        });
+        event.target.reset();
+        await loadEmployees();
+      } catch (err) {
+        $("message").textContent = err.message;
+      }
+    });
+
+    loadEmployees().catch((err) => ($("message").textContent = err.message));
   </script>
 </body>
 </html>
