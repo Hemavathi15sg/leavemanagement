@@ -75,6 +75,7 @@ def create_request():
     days = working_days(start, end)
     conn = db.connect()
     try:
+        # FIXME: pending requests are not counted against the balance, so two pending requests can overbook.
         available = employee_balance(conn, body["employee_id"])["available_days"]
         if days > available:
             return jsonify(error=f"requested {days} days but only {available} available"), 400
@@ -87,6 +88,35 @@ def create_request():
     finally:
         conn.close()
 
+
+def change_status(request_id, new_status):
+    conn = db.connect()
+    try:
+        row = conn.execute("SELECT * FROM leave_requests WHERE id = ?", (request_id,)).fetchone()
+        if row is None:
+            abort(404, description="request not found")
+        if row["status"] != "pending":
+            return jsonify(error=f"request is already {row['status']}"), 409
+        if new_status == "approved":
+            available = employee_balance(conn, row["employee_id"])["available_days"]
+            if row["days"] > available:
+                return jsonify(error="insufficient balance"), 409
+        conn.execute("UPDATE leave_requests SET status = ? WHERE id = ?", (new_status, request_id))
+        conn.commit()
+        return jsonify(id=request_id, status=new_status)
+    finally:
+        conn.close()
+
+
+# FIXME: no authentication. Any caller can approve or reject. Add a manager check before pilot.
+@app.post("/api/requests/<int:request_id>/approve")
+def approve(request_id):
+    return change_status(request_id, "approved")
+
+
+@app.post("/api/requests/<int:request_id>/reject")
+def reject(request_id):
+    return change_status(request_id, "rejected")
 
 
 if __name__ == "__main__":
