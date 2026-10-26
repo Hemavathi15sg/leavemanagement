@@ -11,6 +11,7 @@
     table { border-collapse: collapse; width: 100%; }
     th, td { text-align: left; padding: .4rem; border-bottom: 1px solid #eee; font-size: .95rem; }
     form label { margin-right: 1rem; }
+    button { margin-right: .3rem; }
     .error { color: #b00020; min-height: 1.2em; }
   </style>
 </head>
@@ -36,6 +37,14 @@
     <p id="message" class="error"></p>
   </section>
 
+  <section>
+    <h2>Requests</h2>
+    <table id="requests">
+      <thead><tr><th>#</th><th>Employee</th><th>Dates</th><th>Days</th><th>Status</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
   <script>
     const $ = (id) => document.getElementById(id);
     const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) =>
@@ -56,6 +65,26 @@
         .map((e) => `<tr><td>${escapeHtml(e.name)}</td><td>${e.available_days}</td></tr>`).join("");
     }
 
+    async function loadRequests() {
+      const rows = await api("/api/requests");
+      $("requests").tBodies[0].innerHTML = rows.map((r) => `
+        <tr>
+          <td>${r.id}</td>
+          <td>${escapeHtml(r.employee_name)}</td>
+          <td>${r.start_date} to ${r.end_date}</td>
+          <td>${r.days}</td>
+          <td>${r.status}</td>
+          <td>${r.status === "pending"
+            ? `<button data-id="${r.id}" data-action="approve">Approve</button>
+               <button data-id="${r.id}" data-action="reject">Reject</button>`
+            : ""}</td>
+        </tr>`).join("");
+    }
+
+    async function refresh() {
+      await Promise.all([loadEmployees(), loadRequests()]);
+    }
+
     $("request-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       $("message").textContent = "";
@@ -69,13 +98,24 @@
           }),
         });
         event.target.reset();
-        await loadEmployees();
+        await refresh();
       } catch (err) {
         $("message").textContent = err.message;
       }
     });
 
-    loadEmployees().catch((err) => ($("message").textContent = err.message));
+    $("requests").addEventListener("click", async (event) => {
+      const btn = event.target.closest("button[data-id]");
+      if (!btn) return;
+      try {
+        await api(`/api/requests/${btn.dataset.id}/${btn.dataset.action}`, { method: "POST" });
+        await refresh();
+      } catch (err) {
+        $("message").textContent = err.message;
+      }
+    });
+
+    refresh().catch((err) => ($("message").textContent = err.message));
   </script>
 </body>
 </html>
