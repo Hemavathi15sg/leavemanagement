@@ -1,11 +1,13 @@
 """Leave rules. Accrual, balance and working days are calculated here."""
 from datetime import date, timedelta
 
-ACCRUAL_PER_MONTH = 1.5  # days earned per full month worked
+ACCRUAL_PER_MONTH = 2.0  # days earned per full month worked
+ANNUAL_CAP = 24.0        # accrued days cannot exceed this in one calendar year
 
 
 def accrued_days(months_worked: int) -> float:
-    return months_worked * ACCRUAL_PER_MONTH
+    """Days accrued this year, capped at ANNUAL_CAP."""
+    return min(months_worked * ACCRUAL_PER_MONTH, ANNUAL_CAP)
 
 
 def balance(opening: float, months_worked: int, approved_days: float) -> float:
