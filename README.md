@@ -18,3 +18,13 @@ A small app for tracking annual leave: a Flask API, a sigle-page UI and SQLite.
 ## Tests
 
 `pytest`
+
+## API
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | /api/employees | List employees with available days |
+| GET | /api/employees/<id>/balance | Balance for one employee |
+| GET | /api/requests | List leave requests |
+| POST | /api/requests | Submit a leave request |
+| POST | /api/requests/<id>/approve | Approve a pending request |
