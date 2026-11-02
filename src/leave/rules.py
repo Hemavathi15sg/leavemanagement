@@ -10,11 +10,13 @@ def accrued_days(months_worked: int) -> float:
     return min(months_worked * ACCRUAL_PER_MONTH, ANNUAL_CAP)
 
 
+# TODO: carry unused days into the next year (not built yet).
 def balance(opening: float, months_worked: int, approved_days: float) -> float:
     """Days available now: opening balance plus accrual, minus approved leave."""
     return opening + accrued_days(months_worked) - approved_days
 
 
+# TODO: exclude public holidays once a holiday calendar exists.
 def working_days(start: date, end: date) -> int:
     """Count Monday to Friday days from start to end, inclusive."""
     days = 0
