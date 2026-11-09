@@ -1,6 +1,6 @@
 # Leave Management
 
-A small app for tracking annual leave: a Flask API, a sigle-page UI and SQLite.
+A small app for tracking annual leave: a Flask API, a single-page UI and SQLite.
 
 ## Features
 
