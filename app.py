@@ -118,6 +118,5 @@ def approve(request_id):
 def reject(request_id):
     return change_status(request_id, "rejected")
 
-
 if __name__ == "__main__":
     app.run(debug=True)
