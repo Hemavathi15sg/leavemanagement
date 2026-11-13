@@ -1,4 +1,5 @@
 """Leave Management API and single-page UI."""
+import re
 from datetime import date
 from pathlib import Path
 
@@ -6,7 +7,7 @@ from flasgger import Swagger
 from flask import Flask, abort, jsonify, request, send_from_directory
 
 from src.leave import db
-from src.leave.rules import balance, working_days
+from src.leave.rules import accrued_days, balance, days_in_year, working_days
 
 BASE_DIR = Path(__file__).parent
 app = Flask(__name__)
@@ -23,7 +24,12 @@ swagger = Swagger(app, template={
             "properties": {
                 "id": {"type": "integer"},
                 "name": {"type": "string"},
-                "available_days": {"type": "number"},
+                "year": {"type": "integer", "example": 2026},
+                "earned_days": {"type": "number", "example": 4.0},
+                "carried_days": {"type": "number", "example": 5.0},
+                "opening_days": {"type": "number", "example": 0.0},
+                "approved_days": {"type": "number", "example": 0.0},
+                "available_days": {"type": "number", "example": 9.0},
             },
         },
         "LeaveRequest": {
@@ -70,21 +76,80 @@ swagger = Swagger(app, template={
 })
 
 
-def approved_days(conn, employee_id):
+# Create any missing tables (CREATE TABLE IF NOT EXISTS, so safe on an existing leave.db).
+_conn = db.connect()
+try:
+    db.init_db(_conn)
+finally:
+    _conn.close()
+
+
+def approved_days(conn, employee_id, year):
+    """Approved working days inside `year`. A request spanning a year end is split by year."""
+    rows = conn.execute(
+        "SELECT start_date, end_date FROM leave_requests "
+        "WHERE employee_id = ? AND status = 'approved' AND start_date <= ? AND end_date >= ?",
+        (employee_id, f"{year}-12-31", f"{year}-01-01"),
+    ).fetchall()
+    return sum(
+        days_in_year(date.fromisoformat(r["start_date"]), date.fromisoformat(r["end_date"]), year)
+        for r in rows
+    )
+
+
+def carried_in(conn, employee_id, year):
+    """Days carried into `year` from the carry_forward ledger, 0 if none."""
     row = conn.execute(
-        "SELECT COALESCE(SUM(days), 0) AS total FROM leave_requests "
-        "WHERE employee_id = ? AND status = 'approved'",
-        (employee_id,),
+        "SELECT carried_days FROM carry_forward WHERE employee_id = ? AND year = ?",
+        (employee_id, year),
     ).fetchone()
-    return row["total"]
+    return row["carried_days"] if row else 0.0
 
 
-def employee_balance(conn, employee_id):
+ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def parse_iso_date(value, field):
+    """Parse a strict YYYY-MM-DD string, raising ValueError with a client-facing message."""
+    if not isinstance(value, str) or not ISO_DATE.match(value):
+        raise ValueError(f"{field} must be a date in YYYY-MM-DD format")
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f"{field} is not a valid date") from None
+
+
+YEAR = re.compile(r"^\d{4}$")
+
+
+def parse_year(raw):
+    """Year from a ?year= value, or the current calendar year when absent."""
+    if raw is None:
+        return date.today().year
+    if not YEAR.match(raw):
+        raise ValueError("year must be a 4-digit year")
+    return int(raw)
+
+
+def employee_balance(conn, employee_id, year=None):
     emp = conn.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone()
     if emp is None:
         abort(404, description="employee not found")
-    available = balance(emp["opening_balance"], emp["months_worked"], approved_days(conn, employee_id))
-    return {"id": emp["id"], "name": emp["name"], "available_days": available}
+    year = year or date.today().year
+    earned = accrued_days(emp["months_worked"])
+    carried = carried_in(conn, employee_id, year)
+    used = approved_days(conn, employee_id, year)
+    available = balance(emp["opening_balance"], emp["months_worked"], used, carried)
+    return {
+        "id": emp["id"],
+        "name": emp["name"],
+        "year": year,
+        "earned_days": earned,
+        "carried_days": carried,
+        "opening_days": emp["opening_balance"],
+        "approved_days": used,
+        "available_days": available,
+    }
 
 
 @app.get("/")
@@ -94,10 +159,20 @@ def index():
 
 @app.get("/api/employees")
 def list_employees():
-    """List all employees with their available leave balance.
+    """List all employees with their leave balance for a year.
     ---
     tags: [Employees]
+    parameters:
+      - name: year
+        in: query
+        type: integer
+        required: false
+        description: Calendar year. Defaults to the current year.
     responses:
+      400:
+        description: Year is not a 4-digit number.
+        schema:
+          $ref: '#/definitions/Error'
       200:
         description: Employees with balances, ordered by name.
         schema:
@@ -105,10 +180,14 @@ def list_employees():
           items:
             $ref: '#/definitions/EmployeeBalance'
     """
+    try:
+        year = parse_year(request.args.get("year"))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     conn = db.connect()
     try:
         ids = [r["id"] for r in conn.execute("SELECT id FROM employees ORDER BY name")]
-        return jsonify([employee_balance(conn, i) for i in ids])
+        return jsonify([employee_balance(conn, i, year) for i in ids])
     finally:
         conn.close()
 
@@ -123,19 +202,32 @@ def get_balance(employee_id):
         in: path
         type: integer
         required: true
+      - name: year
+        in: query
+        type: integer
+        required: false
+        description: Calendar year. Defaults to the current year.
     responses:
       200:
-        description: Employee balance.
+        description: Employee balance, split into earned, carried and approved days.
         schema:
           $ref: '#/definitions/EmployeeBalance'
+      400:
+        description: Year is not a 4-digit number.
+        schema:
+          $ref: '#/definitions/Error'
       404:
         description: Employee not found.
         schema:
           $ref: '#/definitions/Error'
     """
+    try:
+        year = parse_year(request.args.get("year"))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     conn = db.connect()
     try:
-        return jsonify(employee_balance(conn, employee_id))
+        return jsonify(employee_balance(conn, employee_id, year))
     finally:
         conn.close()
 
@@ -190,21 +282,34 @@ def create_request():
         schema:
           $ref: '#/definitions/Error'
     """
-    body = request.get_json(force=True)
-    start = date.fromisoformat(body["start_date"])
-    end = date.fromisoformat(body["end_date"])
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(error="request body must be a JSON object"), 400
+    missing = [f for f in ("employee_id", "start_date", "end_date") if f not in body]
+    if missing:
+        return jsonify(error=f"missing fields: {', '.join(missing)}"), 400
+    employee_id = body["employee_id"]
+    if not isinstance(employee_id, int) or isinstance(employee_id, bool):
+        return jsonify(error="employee_id must be an integer"), 400
+    try:
+        start = parse_iso_date(body["start_date"], "start_date")
+        end = parse_iso_date(body["end_date"], "end_date")
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     if end < start:
         return jsonify(error="end date is before start date"), 400
     days = working_days(start, end)
     conn = db.connect()
     try:
+        if conn.execute("SELECT 1 FROM employees WHERE id = ?", (employee_id,)).fetchone() is None:
+            return jsonify(error="employee not found"), 404
         # FIXME: pending requests are not counted against the balance, so two pending requests can overbook.
-        available = employee_balance(conn, body["employee_id"])["available_days"]
+        available = employee_balance(conn, employee_id)["available_days"]
         if days > available:
             return jsonify(error=f"requested {days} days but only {available} available"), 400
         cur = conn.execute(
             "INSERT INTO leave_requests (employee_id, start_date, end_date, days) VALUES (?, ?, ?, ?)",
-            (body["employee_id"], start.isoformat(), end.isoformat(), days),
+            (employee_id, start.isoformat(), end.isoformat(), days),
         )
         conn.commit()
         return jsonify(id=cur.lastrowid, days=days, status="pending"), 201

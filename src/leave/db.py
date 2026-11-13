@@ -19,6 +19,13 @@ CREATE TABLE IF NOT EXISTS leave_requests (
     days REAL NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending'
 );
+CREATE TABLE IF NOT EXISTS carry_forward (
+    employee_id INTEGER NOT NULL REFERENCES employees(id),
+    year INTEGER NOT NULL,            -- calendar year the carried days apply to
+    carried_days REAL NOT NULL,
+    run_at TEXT NOT NULL,
+    PRIMARY KEY (employee_id, year)
+);
 """
 
 

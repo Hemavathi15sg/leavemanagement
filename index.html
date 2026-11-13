@@ -21,7 +21,7 @@
   <section>
     <h2>Employees</h2>
     <table id="employees">
-      <thead><tr><th>Name</th><th>Available days</th></tr></thead>
+      <thead><tr><th>Name</th><th>Earned</th><th>Carried</th><th>Available</th></tr></thead>
       <tbody></tbody>
     </table>
   </section>
@@ -62,7 +62,7 @@
       $("employee").innerHTML = employees
         .map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join("");
       $("employees").tBodies[0].innerHTML = employees
-        .map((e) => `<tr><td>${escapeHtml(e.name)}</td><td>${e.available_days}</td></tr>`).join("");
+        .map((e) => `<tr><td>${escapeHtml(e.name)}</td><td>${e.earned_days}</td><td>${e.carried_days}</td><td>${e.available_days}</td></tr>`).join("");
     }
 
     async function loadRequests() {

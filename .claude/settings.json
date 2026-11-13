@@ -1,7 +1,16 @@
 {
   "hooks": {
     "PostToolUse": [
-      { "matcher": "Edit|Write", "hooks": [ { "type": "command", "command": "pytest -q" } ] }
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pytest -q",
+            "statusMessage": "running tests after edit"
+          }
+        ]
+      }
     ]
   }
 }
