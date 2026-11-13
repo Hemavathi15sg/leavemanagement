@@ -2,6 +2,7 @@
 from datetime import date
 from pathlib import Path
 
+from flasgger import Swagger
 from flask import Flask, abort, jsonify, request, send_from_directory
 
 from src.leave import db
@@ -9,6 +10,64 @@ from src.leave.rules import balance, working_days
 
 BASE_DIR = Path(__file__).parent
 app = Flask(__name__)
+# Swagger UI at /apidocs/, raw spec at /apispec_1.json
+swagger = Swagger(app, template={
+    "info": {
+        "title": "Leave Management API",
+        "version": "1.0.0",
+        "description": "Employee leave balances and leave requests.",
+    },
+    "definitions": {
+        "EmployeeBalance": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "name": {"type": "string"},
+                "available_days": {"type": "number"},
+            },
+        },
+        "LeaveRequest": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "employee_id": {"type": "integer"},
+                "employee_name": {"type": "string"},
+                "start_date": {"type": "string", "format": "date"},
+                "end_date": {"type": "string", "format": "date"},
+                "days": {"type": "integer"},
+                "status": {"type": "string", "enum": ["pending", "approved", "rejected"]},
+            },
+        },
+        "NewRequest": {
+            "type": "object",
+            "required": ["employee_id", "start_date", "end_date"],
+            "properties": {
+                "employee_id": {"type": "integer"},
+                "start_date": {"type": "string", "format": "date", "example": "2026-12-01"},
+                "end_date": {"type": "string", "format": "date", "example": "2026-12-03"},
+            },
+        },
+        "CreatedRequest": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "days": {"type": "integer"},
+                "status": {"type": "string", "example": "pending"},
+            },
+        },
+        "StatusChange": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "status": {"type": "string", "enum": ["approved", "rejected"]},
+            },
+        },
+        "Error": {
+            "type": "object",
+            "properties": {"error": {"type": "string"}},
+        },
+    },
+})
 
 
 def approved_days(conn, employee_id):
@@ -35,6 +94,17 @@ def index():
 
 @app.get("/api/employees")
 def list_employees():
+    """List all employees with their available leave balance.
+    ---
+    tags: [Employees]
+    responses:
+      200:
+        description: Employees with balances, ordered by name.
+        schema:
+          type: array
+          items:
+            $ref: '#/definitions/EmployeeBalance'
+    """
     conn = db.connect()
     try:
         ids = [r["id"] for r in conn.execute("SELECT id FROM employees ORDER BY name")]
@@ -45,6 +115,24 @@ def list_employees():
 
 @app.get("/api/employees/<int:employee_id>/balance")
 def get_balance(employee_id):
+    """Get one employee's available leave balance.
+    ---
+    tags: [Employees]
+    parameters:
+      - name: employee_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Employee balance.
+        schema:
+          $ref: '#/definitions/EmployeeBalance'
+      404:
+        description: Employee not found.
+        schema:
+          $ref: '#/definitions/Error'
+    """
     conn = db.connect()
     try:
         return jsonify(employee_balance(conn, employee_id))
@@ -54,6 +142,17 @@ def get_balance(employee_id):
 
 @app.get("/api/requests")
 def list_requests():
+    """List all leave requests, newest first.
+    ---
+    tags: [Requests]
+    responses:
+      200:
+        description: Leave requests with the employee name.
+        schema:
+          type: array
+          items:
+            $ref: '#/definitions/LeaveRequest'
+    """
     conn = db.connect()
     try:
         rows = conn.execute(
@@ -67,6 +166,30 @@ def list_requests():
 
 @app.post("/api/requests")
 def create_request():
+    """Create a pending leave request. Days are working days (Mon-Fri).
+    ---
+    tags: [Requests]
+    consumes: [application/json]
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/NewRequest'
+    responses:
+      201:
+        description: Request created as pending.
+        schema:
+          $ref: '#/definitions/CreatedRequest'
+      400:
+        description: End date before start date, or not enough balance.
+        schema:
+          $ref: '#/definitions/Error'
+      404:
+        description: Employee not found.
+        schema:
+          $ref: '#/definitions/Error'
+    """
     body = request.get_json(force=True)
     start = date.fromisoformat(body["start_date"])
     end = date.fromisoformat(body["end_date"])
@@ -111,11 +234,55 @@ def change_status(request_id, new_status):
 # FIXME: no authentication. Any caller can approve or reject. Add a manager check before pilot.
 @app.post("/api/requests/<int:request_id>/approve")
 def approve(request_id):
+    """Approve a pending leave request.
+    ---
+    tags: [Requests]
+    parameters:
+      - name: request_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Request approved.
+        schema:
+          $ref: '#/definitions/StatusChange'
+      404:
+        description: Request not found.
+        schema:
+          $ref: '#/definitions/Error'
+      409:
+        description: Not pending, or insufficient balance.
+        schema:
+          $ref: '#/definitions/Error'
+    """
     return change_status(request_id, "approved")
 
 
 @app.post("/api/requests/<int:request_id>/reject")
 def reject(request_id):
+    """Reject a pending leave request.
+    ---
+    tags: [Requests]
+    parameters:
+      - name: request_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Request rejected.
+        schema:
+          $ref: '#/definitions/StatusChange'
+      404:
+        description: Request not found.
+        schema:
+          $ref: '#/definitions/Error'
+      409:
+        description: Request is not pending.
+        schema:
+          $ref: '#/definitions/Error'
+    """
     return change_status(request_id, "rejected")
 
 if __name__ == "__main__":
